@@ -4,7 +4,7 @@
 -- This file should be generic and not depend on application roles or structures,
 -- as it's being listed here:
 --
---    https://wiki.postgresql.org/wiki/Audit_trigger_91plus    
+--    https://wiki.postgresql.org/wiki/Audit_trigger_91plus
 --
 -- This trigger was originally based on
 --   http://wiki.postgresql.org/wiki/Audit_trigger
@@ -41,7 +41,8 @@ CREATE TABLE audit.logged_actions (
     schema_name text not null,
     table_name text not null,
     relid oid not null,
-    session_user_name text,
+    database_user text,
+    user_id text,
     action_tstamp_tx TIMESTAMP WITH TIME ZONE NOT NULL,
     action_tstamp_stm TIMESTAMP WITH TIME ZONE NOT NULL,
     action_tstamp_clk TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -63,7 +64,7 @@ COMMENT ON COLUMN audit.logged_actions.event_id IS 'Unique identifier for each a
 COMMENT ON COLUMN audit.logged_actions.schema_name IS 'Database schema audited table for this event is in';
 COMMENT ON COLUMN audit.logged_actions.table_name IS 'Non-schema-qualified table name of table event occured in';
 COMMENT ON COLUMN audit.logged_actions.relid IS 'Table OID. Changes with drop/create. Get with ''tablename''::regclass';
-COMMENT ON COLUMN audit.logged_actions.session_user_name IS 'Login / session user whose statement caused the audited event';
+COMMENT ON COLUMN audit.logged_actions.database_user IS 'Login / session user whose statement caused the audited event';
 COMMENT ON COLUMN audit.logged_actions.action_tstamp_tx IS 'Transaction start timestamp for tx in which audited event occurred';
 COMMENT ON COLUMN audit.logged_actions.action_tstamp_stm IS 'Statement start timestamp for tx in which audited event occurred';
 COMMENT ON COLUMN audit.logged_actions.action_tstamp_clk IS 'Wall clock time at which audited event''s trigger call occurred';
@@ -99,7 +100,8 @@ BEGIN
         TG_TABLE_SCHEMA::text,                        -- schema_name
         TG_TABLE_NAME::text,                          -- table_name
         TG_RELID,                                     -- relation OID for much quicker searches
-        session_user::text,                           -- session_user_name
+        session_user::text,                           -- database_user
+        current_setting('audit.user_id', True),       -- user_id from external system we run query
         current_timestamp,                            -- action_tstamp_tx
         statement_timestamp(),                        -- action_tstamp_stm
         clock_timestamp(),                            -- action_tstamp_clk
@@ -120,7 +122,7 @@ BEGIN
     IF TG_ARGV[1] IS NOT NULL THEN
         excluded_cols = TG_ARGV[1]::text[];
     END IF;
-    
+
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(OLD.*) - excluded_cols;
         audit_row.changed_fields =  (hstore(NEW.*) - audit_row.row_data) - excluded_cols;
@@ -193,8 +195,8 @@ BEGIN
         IF array_length(ignored_cols,1) > 0 THEN
             _ignored_cols_snip = ', ' || quote_literal(ignored_cols);
         END IF;
-        _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' || 
-                 target_table || 
+        _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' ||
+                 target_table ||
                  ' FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func(' ||
                  quote_literal(audit_query_text) || _ignored_cols_snip || ');';
         RAISE NOTICE '%',_q_txt;
@@ -240,11 +242,11 @@ COMMENT ON FUNCTION audit.audit_table(regclass) IS $body$
 Add auditing support to the given table. Row-level changes will be logged with full client query text. No cols are ignored.
 $body$;
 
-CREATE OR REPLACE VIEW audit.tableslist AS 
+CREATE OR REPLACE VIEW audit.tableslist AS
  SELECT DISTINCT triggers.trigger_schema AS schema,
     triggers.event_object_table AS auditedtable
    FROM information_schema.triggers
-    WHERE triggers.trigger_name::text IN ('audit_trigger_row'::text, 'audit_trigger_stm'::text)  
+    WHERE triggers.trigger_name::text IN ('audit_trigger_row'::text, 'audit_trigger_stm'::text)
 ORDER BY schema, auditedtable;
 
 COMMENT ON VIEW audit.tableslist IS $body$
