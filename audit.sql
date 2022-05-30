@@ -1,3 +1,4 @@
+-- Fork from the https://github.com/2ndQuadrant/audit-trigger with handling local variables made by https://github.com/sychovoleh-nowsta.
 -- An audit history is important on most tables. Provide an audit trigger that logs to
 -- a dedicated audit table for the major relations.
 --
